@@ -2,13 +2,17 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: hermes-agent-state
-  namespace: ai
+  namespace: hermes-agent  # Override via kustomization patch
   labels:
     app: hermes-agent
 spec:
   accessModes:
     - ReadWriteOnce
-  storageClassName: local-path-data
+  # Override storageClassName in your kustomization overlay:
+  # - local-path  (single-node, fast I/O)
+  # - longhorn    (replicated, snapshots)
+  # - standard    (cloud provider default)
+  storageClassName: local-path
   resources:
     requests:
       storage: 20Gi

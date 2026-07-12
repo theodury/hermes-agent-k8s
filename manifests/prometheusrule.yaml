@@ -2,9 +2,10 @@ apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
   name: hermes-agent
-  namespace: ai
+  namespace: hermes-agent  # Override via kustomization patch
   labels:
     app: hermes-agent
+    # Adjust these labels to match your Prometheus operator selector:
     prometheus: kube-prometheus
     role: alert-rules
 spec:
@@ -12,30 +13,27 @@ spec:
     - name: hermes-agent.rules
       interval: 1m
       rules:
-        # Alert: pod not ready for 5 minutes
         - alert: HermesAgentDown
           expr: |
-            kube_deployment_status_replicas_ready{namespace="ai", deployment="hermes-agent"} == 0
+            kube_deployment_status_replicas_ready{namespace="hermes-agent", deployment="hermes-agent"} == 0
           for: 5m
           labels:
             severity: critical
-            team: homelab
           annotations:
             summary: "Hermes Agent pod is down"
-            description: "Hermes Agent deployment has 0 ready replicas for more than 5 minutes. Check: kubectl logs -n ai deployment/hermes-agent"
+            description: "Hermes Agent has 0 ready replicas for more than 5 minutes."
 
-        # Alert: memory > 90% of limit (16Gi) for 15 minutes
         - alert: HermesAgentHighMemory
           expr: |
             (
               container_memory_working_set_bytes{
-                namespace="ai",
+                namespace="hermes-agent",
                 pod=~"hermes-agent-.*",
                 container="hermes-agent"
               }
               /
               kube_pod_container_resource_limits{
-                namespace="ai",
+                namespace="hermes-agent",
                 pod=~"hermes-agent-.*",
                 container="hermes-agent",
                 resource="memory"
@@ -44,23 +42,20 @@ spec:
           for: 15m
           labels:
             severity: warning
-            team: homelab
           annotations:
             summary: "Hermes Agent memory usage > 90%"
-            description: "Hermes Agent is using more than 90% of its 16Gi memory limit for 15+ minutes. Consider restarting or upgrading node memory."
+            description: "Hermes Agent is using more than 90% of its memory limit for 15+ minutes."
 
-        # Alert: pod restarting frequently (CrashLoopBackOff pattern)
         - alert: HermesAgentCrashLoop
           expr: |
             increase(kube_pod_container_status_restarts_total{
-              namespace="ai",
+              namespace="hermes-agent",
               pod=~"hermes-agent-.*",
               container="hermes-agent"
             }[1h]) > 3
           for: 0m
           labels:
             severity: warning
-            team: homelab
           annotations:
             summary: "Hermes Agent restarting frequently"
-            description: "Hermes Agent has restarted more than 3 times in the last hour. Check logs: kubectl logs -n ai deployment/hermes-agent --previous"
+            description: "Hermes Agent has restarted more than 3 times in the last hour."

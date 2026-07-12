@@ -2,13 +2,16 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: hermes-agent-config
-  namespace: ai
+  namespace: hermes-agent  # Override via kustomization patch
   labels:
     app: hermes-agent
 data:
   config.yaml: |
     # Hermes Agent configuration
     # https://github.com/nousresearch/hermes-agent
+    #
+    # Endpoints (OLLAMA_BASE_URL, QDRANT_URL) are set via env vars in the Deployment.
+    # Override them in your kustomization overlay.
 
     hermes:
       home: /opt/data/hermes
@@ -16,15 +19,15 @@ data:
     llm:
       provider: ollama
       model: hermes3:8b
-      base_url: http://ollama.ai.svc.cluster.local:11434
-      # Fallback to 70b once GPU memory allows:
-      # model: hermes3:70b
+      # Override model in your overlay patch:
+      # model: hermes3:70b  # if you have GPU memory
+      # model: hermes3:14b  # good balance quality/speed
 
     memory:
       provider: qdrant
-      url: http://qdrant.ai.svc.cluster.local:6333
       collection: hermes-memory
-      # Change to 'none' to disable RAG temporarily
+      # Set to 'none' to disable RAG:
+      # provider: none
 
     skills:
       path: /opt/data/hermes/skills
@@ -32,8 +35,9 @@ data:
     gateway:
       type: discord
       # Token injected from Secret via env DISCORD_TOKEN
-      # Allowed users: inject via env DISCORD_ALLOWED_USERS (comma-separated user IDs)
+      # Allowed users injected via env DISCORD_ALLOWED_USERS (comma-separated IDs)
+      # To use a different gateway type, change to: telegram, matrix, slack
 
     logging:
       level: info
-      # Set to 'debug' temporarily for troubleshooting
+      # Set to 'debug' for troubleshooting

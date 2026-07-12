@@ -1,10 +1,8 @@
-# ClusterIP service — only needed if you enable the API server (hermes serve)
-# In gateway-only mode (S32), this service is created but not used
 apiVersion: v1
 kind: Service
 metadata:
   name: hermes-agent
-  namespace: ai
+  namespace: hermes-agent  # Override via kustomization patch
   labels:
     app: hermes-agent
 spec:
@@ -16,3 +14,5 @@ spec:
       port: 8642
       targetPort: 8642
       protocol: TCP
+# Note: this Service is only used when running in API server mode (hermes serve).
+# In gateway-only mode (default), the pod does not expose an HTTP port.

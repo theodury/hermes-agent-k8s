@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: hermes-agent
-  namespace: ai
+  namespace: hermes-agent  # Override via kustomization patch
   labels:
     app: hermes-agent
     app.kubernetes.io/name: hermes-agent
@@ -10,7 +10,7 @@ metadata:
 spec:
   replicas: 1
   strategy:
-    type: Recreate  # Single instance, SQLite state on PVC
+    type: Recreate  # Single instance — SQLite state on PVC
   selector:
     matchLabels:
       app: hermes-agent
@@ -18,22 +18,11 @@ spec:
     metadata:
       labels:
         app: hermes-agent
-      annotations:
-        # Force rolling restart when ConfigMap changes
-        kubectl.kubernetes.io/restartedAt: "2026-07-13T00:00:00Z"
     spec:
       serviceAccountName: hermes-agent
 
-      # Pin to ms-a2-cp01 (colocated with Ollama for low-latency LLM calls)
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-              - matchExpressions:
-                  - key: kubernetes.io/hostname
-                    operator: In
-                    values:
-                      - ms-a2-cp01
+      # Node affinity disabled by default — pin to a specific node via kustomization patch
+      # See overlays/example/patch-node-affinity.yaml
 
       terminationGracePeriodSeconds: 30
 
@@ -70,12 +59,13 @@ spec:
       containers:
         - name: hermes-agent
           image: nousresearch/hermes-agent:latest
-          # Pin to a specific digest or tag for production stability:
+          # Pin to a specific tag for production stability, e.g.:
           # image: nousresearch/hermes-agent:v0.18.2
           imagePullPolicy: IfNotPresent
 
+          # Gateway mode (Discord/Matrix/Telegram) — default for S32
           command: ["hermes", "gateway", "run"]
-          # API server mode (disabled for S32, enable later):
+          # API server mode (OpenAI-compatible endpoint) — enable in a later phase:
           # command: ["hermes", "serve"]
 
           env:
@@ -83,10 +73,11 @@ spec:
               value: /opt/data/hermes
             - name: HERMES_CONFIG
               value: /config/config.yaml
+            # Override these in your overlay or via patch:
             - name: OLLAMA_BASE_URL
-              value: http://ollama.ai.svc.cluster.local:11434
+              value: http://ollama:11434  # e.g. http://ollama.ai.svc.cluster.local:11434
             - name: QDRANT_URL
-              value: http://qdrant.ai.svc.cluster.local:6333
+              value: http://qdrant:6333   # e.g. http://qdrant.ai.svc.cluster.local:6333
             - name: DISCORD_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -106,7 +97,7 @@ spec:
               cpu: "4"
               memory: 16Gi
 
-          # No HTTP health endpoint in gateway mode — use process liveness
+          # Process-level liveness (no HTTP endpoint in gateway mode)
           livenessProbe:
             exec:
               command:

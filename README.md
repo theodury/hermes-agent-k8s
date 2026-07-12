@@ -1,95 +1,128 @@
 # hermes-agent-k8s
 
-Kustomize manifests to deploy [Hermes Agent](https://github.com/nousresearch/hermes-agent) (NousResearch) on a Kubernetes cluster.
+Production-ready Kustomize manifests to deploy [Hermes Agent](https://github.com/nousresearch/hermes-agent) (NousResearch) on any Kubernetes cluster.
 
-This repo contains **only the K8s deployment layer**. Application config (Ollama endpoint, Qdrant endpoint, Discord token) is injected via ConfigMap and SOPS-encrypted Secret managed in your homelab GitOps repo.
+This repo contains **only the K8s deployment layer** — generic and reusable. Your cluster-specific config (endpoints, node affinity, namespace, secrets) lives in your own GitOps overlay.
 
 ## Architecture
 
 ```
-Discord (Hypnoga server)
+Discord (private server)
     │
     ▼
-Hermes Agent pod (ai namespace)
-    ├── Ollama  → http://ollama.ai.svc.cluster.local:11434  (hermes3:8b)
-    └── Qdrant  → http://qdrant.ai.svc.cluster.local:6333
+Hermes Agent pod
+    ├── Ollama  →  http://<your-ollama-endpoint>:11434  (hermes3:8b by default)
+    └── Qdrant  →  http://<your-qdrant-endpoint>:6333
 ```
 
 ## Prerequisites
 
-- Kubernetes cluster with Flux CD
-- Namespace `ai` already exists
-- Traefik as ingress controller with `wildcard-lab-technoga-net-tls` secret
-- Ollama running with `hermes3:8b` model pulled
-- Qdrant running with a collection for RAG
-- SOPS + age key configured in your cluster
+- Kubernetes 1.26+
+- Kustomize or Flux CD
+- Traefik (optional, for API server mode)
+- Prometheus Operator (optional, for alerts)
+- SOPS + age key (for secret encryption)
+- Ollama running with a Hermes model pulled: `ollama pull hermes3:8b`
+- Qdrant running with a collection for RAG memory
 
-## Usage in your homelab repo
+## Quick start
 
-Reference this repo as a Flux `GitRepository` source, or copy the manifests into your `apps/base/ai/hermes-agent/` directory.
-
-### Quick copy
-
-```bash
-cp -r manifests/ ~/workspace/technoga/homelab/apps/base/ai/hermes-agent/
-```
-
-### Flux GitRepository (optional)
-
-```yaml
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata:
-  name: hermes-agent-k8s
-  namespace: flux-system
-spec:
-  interval: 10m
-  url: https://github.com/theodury/hermes-agent-k8s
-  ref:
-    branch: main
-```
-
-## Secret setup
-
-Before deploying, encrypt your Discord token with SOPS:
+### 1. Create your overlay
 
 ```bash
-# 1. Edit the placeholder secret
+cp -r overlays/example overlays/mycluster
+cd overlays/mycluster
+```
+
+Edit `kustomization.yaml`:
+- Set your `namespace`
+- Set your `OLLAMA_BASE_URL` and `QDRANT_URL`
+- Optionally pin to a specific node
+- Optionally change `storageClassName`
+
+### 2. Set up your Discord bot
+
+1. Go to [discord.com/developers](https://discord.com/developers/applications) → New Application
+2. Bot section → Reset Token → copy token
+3. Enable: `Message Content Intent`, `Server Members Intent`
+4. Invite bot to your server with `bot` scope + `Send Messages` + `Read Message History` permissions
+5. Find your Discord user ID: Settings → Advanced → Developer Mode → right-click your avatar → Copy User ID
+
+### 3. Encrypt your secret
+
+```bash
+# Edit the placeholder
 vim manifests/hermes-agent-secrets.sops.yaml
-# Replace CHANGE_ME with your actual token from BotFather
+# Replace CHANGE_ME with your real token and user ID
 
-# 2. Encrypt with your age key
+# Encrypt with your age key
 sops --encrypt --in-place manifests/hermes-agent-secrets.sops.yaml
 
-# 3. Commit the encrypted file (never the plaintext)
+# Commit only the encrypted version — NEVER the plaintext
 git add manifests/hermes-agent-secrets.sops.yaml
-git commit -m 'secret(ai): add encrypted hermes-agent discord token'
+git commit -m 'secret(ai): add encrypted hermes-agent credentials'
 ```
 
-## Verify deployment
+### 4. Deploy
 
 ```bash
-kubectl get pod -n ai -l app=hermes-agent
-kubectl logs -n ai deployment/hermes-agent --tail 100
+# Via kubectl
+kubectl apply -k overlays/mycluster/
+
+# Via Flux — add to your GitOps repo kustomization
 ```
+
+### 5. Verify
+
+```bash
+kubectl get pod -n <your-namespace> -l app=hermes-agent
+kubectl logs -n <your-namespace> deployment/hermes-agent --tail 100
+```
+
+## Customization
+
+| What | How |
+|---|---|
+| Namespace | `namespace:` in your overlay `kustomization.yaml` |
+| Ollama / Qdrant endpoints | Patch `OLLAMA_BASE_URL` / `QDRANT_URL` env vars |
+| LLM model | Edit `configmap-config.yaml` → `llm.model` (e.g. `hermes3:14b`, `hermes3:70b`) |
+| Node affinity | Patch in overlay (see `overlays/example/`) |
+| Storage class | Patch `storageClassName` in overlay |
+| Gateway type | Edit `configmap-config.yaml` → `gateway.type` (`discord`, `telegram`, `matrix`) |
+| Enable API server | Change Deployment `command` to `["hermes", "serve"]` + uncomment IngressRoute |
+| TLS secret | Uncomment and edit `manifests/ingressroute.yaml` with your hostname + TLS secret |
 
 ## Skills
 
-Skills are stored in `skills/` and mounted via ConfigMap into `/opt/data/hermes/skills/`.
+Skills are defined in `manifests/configmap-skills.yaml` and mounted into the pod at startup via an init container.
 
-| Skill | Description |
-|---|---|
-| `check-homelab-status` | Lists nodes + pods health summary via Kubernetes API |
-| `search-runbooks` | Queries Qdrant RAG knowledge base for runbooks |
+| Skill | Trigger | Description |
+|---|---|---|
+| `check-homelab-status` | `@bot check status` | Lists K8s nodes + pod health summary |
+| `search-runbooks` | `@bot search runbooks <query>` | Queries Qdrant RAG for runbook excerpts |
 
-## Upgrade
+To add your own skill: add a new entry in `configmap-skills.yaml` following the same pattern (`skill.yaml` + Python entrypoint).
 
-Update the image tag in `manifests/deployment.yaml`:
+## Enabling the API server (phase 2)
 
-```yaml
-image: nousresearch/hermes-agent:latest  # pin to a specific tag for prod
-```
+The default mode is `hermes gateway run` (Discord bot only, no HTTP port).
+
+To expose an OpenAI-compatible HTTP API:
+1. Change `command` in `deployment.yaml` to `["hermes", "serve"]`
+2. Uncomment the IngressRoute in `manifests/ingressroute.yaml`
+3. Set your hostname and TLS secret name
+4. Choose a middleware (OIDC forward-auth or IP whitelist)
+
+## Alerts
+
+Three PrometheusRules are included (requires Prometheus Operator):
+
+| Alert | Condition | Severity |
+|---|---|---|
+| `HermesAgentDown` | Pod not ready for 5m | critical |
+| `HermesAgentHighMemory` | Memory > 90% of limit for 15m | warning |
+| `HermesAgentCrashLoop` | > 3 restarts in 1h | warning |
 
 ## License
 
-MIT
+MIT — contributions welcome.

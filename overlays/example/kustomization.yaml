@@ -1,0 +1,76 @@
+# Example overlay — copy this to your own GitOps repo and customize
+# Adjust namespace, node affinity, endpoints, storage class, and TLS secret
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: ai  # Change to your target namespace
+
+resources:
+  - ../../manifests
+
+patches:
+  # 1. Override env vars (Ollama + Qdrant endpoints)
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: hermes-agent
+      spec:
+        template:
+          spec:
+            containers:
+              - name: hermes-agent
+                env:
+                  - name: OLLAMA_BASE_URL
+                    value: http://ollama.ai.svc.cluster.local:11434
+                  - name: QDRANT_URL
+                    value: http://qdrant.ai.svc.cluster.local:6333
+
+  # 2. Pin to a specific node (optional — remove if you don't need node affinity)
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: hermes-agent
+      spec:
+        template:
+          spec:
+            affinity:
+              nodeAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                  nodeSelectorTerms:
+                    - matchExpressions:
+                        - key: kubernetes.io/hostname
+                          operator: In
+                          values:
+                            - YOUR_NODE_NAME  # e.g. ms-a2-cp01
+
+  # 3. Override storage class
+  - patch: |-
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: hermes-agent-state
+      spec:
+        storageClassName: local-path-data  # or longhorn, standard, etc.
+
+  # 4. Fix PrometheusRule namespace selector
+  - patch: |-
+      apiVersion: monitoring.coreos.com/v1
+      kind: PrometheusRule
+      metadata:
+        name: hermes-agent
+      spec:
+        groups:
+          - name: hermes-agent.rules
+            interval: 1m
+            rules:
+              - alert: HermesAgentDown
+                expr: |
+                  kube_deployment_status_replicas_ready{namespace="ai", deployment="hermes-agent"} == 0
+                for: 5m
+                labels:
+                  severity: critical
+                annotations:
+                  summary: "Hermes Agent pod is down"
+                  description: "Hermes Agent has 0 ready replicas for more than 5 minutes."
