@@ -1,0 +1,42 @@
+# Read-only access to cluster resources for hermes-agent skills
+# Principle of least privilege: no write access, no secrets access
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: hermes-agent-reader
+  labels:
+    app: hermes-agent
+rules:
+  # Core resources for check-homelab-status skill
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - pods
+      - namespaces
+      - services
+      - endpoints
+    verbs: ["get", "list", "watch"]
+  # Apps resources
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - daemonsets
+      - statefulsets
+      - replicasets
+    verbs: ["get", "list", "watch"]
+  # Flux resources for cluster health visibility
+  - apiGroups: ["kustomize.toolkit.fluxcd.io"]
+    resources:
+      - kustomizations
+    verbs: ["get", "list"]
+  - apiGroups: ["source.toolkit.fluxcd.io"]
+    resources:
+      - gitrepositories
+    verbs: ["get", "list"]
+  # Monitoring
+  - apiGroups: ["monitoring.coreos.com"]
+    resources:
+      - prometheusrules
+      - podmonitors
+      - servicemonitors
+    verbs: ["get", "list"]

@@ -1,0 +1,38 @@
+# IngressRoute for the API server — commented out until 'hermes serve' is enabled
+# Uncomment in S33 when switching from gateway to API server mode
+#
+# apiVersion: traefik.io/v1alpha1
+# kind: IngressRoute
+# metadata:
+#   name: hermes-agent
+#   namespace: ai
+#   labels:
+#     app: hermes-agent
+# spec:
+#   entryPoints:
+#     - websecure
+#   routes:
+#     - match: Host(`hermes.lab.technoga.net`)
+#       kind: Rule
+#       services:
+#         - name: hermes-agent
+#           port: 8642
+#       middlewares:
+#         - name: traefik-forward-auth-keycloak  # OIDC auth via Keycloak
+#           namespace: traefik
+#   tls:
+#     secretName: wildcard-lab-technoga-net-tls
+#
+# Activate by removing the comment block and committing
+---
+# Placeholder resource so kustomization.yaml doesn't fail
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hermes-agent-ingressroute-placeholder
+  namespace: ai
+  labels:
+    app: hermes-agent
+    note: remove-when-api-server-enabled
+data:
+  status: "IngressRoute disabled — gateway-only mode (S32). Enable in S33 with hermes serve."

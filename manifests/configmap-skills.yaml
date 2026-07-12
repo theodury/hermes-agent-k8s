@@ -1,0 +1,128 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hermes-agent-skills
+  namespace: ai
+  labels:
+    app: hermes-agent
+data:
+  # Skill 1: check-homelab-status
+  check-homelab-status_skill.yaml: |
+    name: check-homelab-status
+    description: Check the current health state of the homelab Kubernetes cluster. Returns node status, pod counts per namespace, and any non-Running pods.
+    version: 1.0
+    runtime: python
+    entrypoint: check_status.py
+    inputs:
+      namespace:
+        type: string
+        default: "all"
+        description: Namespace to check, or 'all' for cluster-wide summary
+    outputs:
+      status:
+        type: object
+        description: Cluster health summary with nodes, pods, and issues
+
+  check-homelab-status_check_status.py: |
+    import os
+    import json
+    from kubernetes import client, config
+
+    def run(inputs: dict) -> dict:
+        # Use in-cluster config (ServiceAccount token)
+        config.load_incluster_config()
+        v1 = client.CoreV1Api()
+        apps_v1 = client.AppsV1Api()
+
+        namespace = inputs.get("namespace", "all")
+
+        # Nodes
+        nodes = v1.list_node()
+        node_summary = []
+        for node in nodes.items:
+            conditions = {c.type: c.status for c in node.status.conditions}
+            node_summary.append({
+                "name": node.metadata.name,
+                "ready": conditions.get("Ready") == "True",
+                "roles": ",".join(
+                    k.replace("node-role.kubernetes.io/", "")
+                    for k in (node.metadata.labels or {})
+                    if k.startswith("node-role.kubernetes.io/")
+                ) or "worker",
+            })
+
+        # Pods
+        if namespace == "all":
+            pods = v1.list_pod_for_all_namespaces()
+        else:
+            pods = v1.list_namespaced_pod(namespace)
+
+        total_pods = len(pods.items)
+        not_running = [
+            f"{p.metadata.namespace}/{p.metadata.name} ({p.status.phase})"
+            for p in pods.items
+            if p.status.phase not in ("Running", "Succeeded")
+        ]
+
+        return {
+            "nodes": node_summary,
+            "total_pods": total_pods,
+            "not_running_pods": not_running,
+            "healthy": len(not_running) == 0,
+            "summary": f"{len(node_summary)} nodes, {total_pods} pods, {len(not_running)} issues",
+        }
+
+  # Skill 2: search-runbooks
+  search-runbooks_skill.yaml: |
+    name: search-runbooks
+    description: Search the homelab runbooks knowledge base in Qdrant RAG. Returns relevant runbook excerpts for a given query.
+    version: 1.0
+    runtime: python
+    entrypoint: search_runbooks.py
+    inputs:
+      query:
+        type: string
+        description: Search query (e.g. 'Flux reconcile failed', 'Longhorn degraded volume')
+      top_k:
+        type: integer
+        default: 5
+        description: Number of results to return
+    outputs:
+      results:
+        type: array
+        description: List of matching runbook excerpts with source doc name and relevance score
+
+  search-runbooks_search_runbooks.py: |
+    import os
+    import json
+    from qdrant_client import QdrantClient
+    from qdrant_client.models import SearchRequest
+
+    QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant.ai.svc.cluster.local:6333")
+    COLLECTION = "homelab-runbooks"
+
+    def run(inputs: dict) -> dict:
+        query = inputs["query"]
+        top_k = inputs.get("top_k", 5)
+
+        client = QdrantClient(url=QDRANT_URL)
+
+        # Use Qdrant's built-in sparse/dense search
+        # Embedding is handled by Hermes Agent before calling the skill
+        results = client.search(
+            collection_name=COLLECTION,
+            query_text=query,  # Hermes passes the embedded vector automatically
+            limit=top_k,
+            with_payload=True,
+        )
+
+        return {
+            "results": [
+                {
+                    "source": r.payload.get("source", "unknown"),
+                    "score": round(r.score, 3),
+                    "excerpt": r.payload.get("text", "")[:500],
+                }
+                for r in results
+            ]
+        }

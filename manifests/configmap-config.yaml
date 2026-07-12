@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hermes-agent-config
+  namespace: ai
+  labels:
+    app: hermes-agent
+data:
+  config.yaml: |
+    # Hermes Agent configuration
+    # https://github.com/nousresearch/hermes-agent
+
+    hermes:
+      home: /opt/data/hermes
+
+    llm:
+      provider: ollama
+      model: hermes3:8b
+      base_url: http://ollama.ai.svc.cluster.local:11434
+      # Fallback to 70b once GPU memory allows:
+      # model: hermes3:70b
+
+    memory:
+      provider: qdrant
+      url: http://qdrant.ai.svc.cluster.local:6333
+      collection: hermes-memory
+      # Change to 'none' to disable RAG temporarily
+
+    skills:
+      path: /opt/data/hermes/skills
+
+    gateway:
+      type: discord
+      # Token injected from Secret via env DISCORD_TOKEN
+      # Allowed users: inject via env DISCORD_ALLOWED_USERS (comma-separated user IDs)
+
+    logging:
+      level: info
+      # Set to 'debug' temporarily for troubleshooting

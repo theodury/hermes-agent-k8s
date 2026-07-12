@@ -1,0 +1,153 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hermes-agent
+  namespace: ai
+  labels:
+    app: hermes-agent
+    app.kubernetes.io/name: hermes-agent
+    app.kubernetes.io/component: agent
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate  # Single instance, SQLite state on PVC
+  selector:
+    matchLabels:
+      app: hermes-agent
+  template:
+    metadata:
+      labels:
+        app: hermes-agent
+      annotations:
+        # Force rolling restart when ConfigMap changes
+        kubectl.kubernetes.io/restartedAt: "2026-07-13T00:00:00Z"
+    spec:
+      serviceAccountName: hermes-agent
+
+      # Pin to ms-a2-cp01 (colocated with Ollama for low-latency LLM calls)
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - ms-a2-cp01
+
+      terminationGracePeriodSeconds: 30
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+
+      initContainers:
+        # Copy skills from ConfigMap to PVC so they can be modified at runtime
+        - name: init-skills
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              mkdir -p /opt/data/hermes/skills/check-homelab-status
+              mkdir -p /opt/data/hermes/skills/search-runbooks
+              cp /skills-cm/check-homelab-status_skill.yaml /opt/data/hermes/skills/check-homelab-status/skill.yaml
+              cp /skills-cm/check-homelab-status_check_status.py /opt/data/hermes/skills/check-homelab-status/check_status.py
+              cp /skills-cm/search-runbooks_skill.yaml /opt/data/hermes/skills/search-runbooks/skill.yaml
+              cp /skills-cm/search-runbooks_search_runbooks.py /opt/data/hermes/skills/search-runbooks/search_runbooks.py
+              echo "Skills initialized successfully"
+          volumeMounts:
+            - name: skills-cm
+              mountPath: /skills-cm
+            - name: state
+              mountPath: /opt/data
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+
+      containers:
+        - name: hermes-agent
+          image: nousresearch/hermes-agent:latest
+          # Pin to a specific digest or tag for production stability:
+          # image: nousresearch/hermes-agent:v0.18.2
+          imagePullPolicy: IfNotPresent
+
+          command: ["hermes", "gateway", "run"]
+          # API server mode (disabled for S32, enable later):
+          # command: ["hermes", "serve"]
+
+          env:
+            - name: HERMES_HOME
+              value: /opt/data/hermes
+            - name: HERMES_CONFIG
+              value: /config/config.yaml
+            - name: OLLAMA_BASE_URL
+              value: http://ollama.ai.svc.cluster.local:11434
+            - name: QDRANT_URL
+              value: http://qdrant.ai.svc.cluster.local:6333
+            - name: DISCORD_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-agent-secrets
+                  key: DISCORD_TOKEN
+            - name: DISCORD_ALLOWED_USERS
+              valueFrom:
+                secretKeyRef:
+                  name: hermes-agent-secrets
+                  key: DISCORD_ALLOWED_USERS
+
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              cpu: "4"
+              memory: 16Gi
+
+          # No HTTP health endpoint in gateway mode — use process liveness
+          livenessProbe:
+            exec:
+              command:
+                - pgrep
+                - -f
+                - hermes
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+
+          readinessProbe:
+            exec:
+              command:
+                - pgrep
+                - -f
+                - hermes
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: false  # Hermes writes to HERMES_HOME
+
+          volumeMounts:
+            - name: state
+              mountPath: /opt/data
+            - name: config
+              mountPath: /config
+              readOnly: true
+
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: hermes-agent-state
+        - name: config
+          configMap:
+            name: hermes-agent-config
+        - name: skills-cm
+          configMap:
+            name: hermes-agent-skills
