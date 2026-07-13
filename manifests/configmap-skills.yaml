@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: hermes-agent-skills
-  namespace: ai
+  namespace: hermes-agent
   labels:
     app: hermes-agent
 data:

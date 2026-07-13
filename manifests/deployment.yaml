@@ -31,6 +31,8 @@ spec:
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
 
       initContainers:
         # Copy skills from ConfigMap to PVC so they can be modified at runtime
@@ -119,11 +121,12 @@ spec:
             failureThreshold: 3
 
           securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop:
-                - ALL
-            readOnlyRootFilesystem: false  # Hermes writes to HERMES_HOME
+            - name: hermes-agent
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
 
           volumeMounts:
             - name: state
